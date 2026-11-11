@@ -1,7 +1,7 @@
 import postgres from "postgres";
 
 const url = new URL(process.env.DEMO_DATABASE_URL ?? "");
-if (url.pathname !== "/vent_demo") throw new Error("DEMO_DATABASE_URL must name the isolated vent_demo database");
+if (!["/vent_demo", "/vent_demo_big"].includes(url.pathname)) throw new Error("DEMO_DATABASE_URL must name an isolated demo database");
 export const sql = postgres(url.toString(), { max: 5 });
 
 // ─── Helpers ───
