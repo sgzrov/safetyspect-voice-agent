@@ -4,70 +4,61 @@ SafetySpect's phone line for scheduling safety inspections (fire, electrical, OS
 environmental, comprehensive). Callers can look up their account, check availability,
 book an inspection and cancel one. All business data is fictional.
 
-The same agent runs on five voice platforms. They all call one shared backend for
-their tools, so a booking made through one is visible to the others.
+The same agent runs on Retell and Vapi. Both call one backend for their tools.
 
 ## Layout
 
-| Path | What it is | Runs on |
-| --- | --- | --- |
-| `server/` | Tool endpoints: `lookup_customer`, `check_availability`, `book_inspection`, `cancel_inspection`, with one route per platform's request format | Fly app `vent-demo-backend` |
-| `server/scripts/` | Create or update the hosted Bland, Vapi, Retell and ElevenLabs agents through their APIs | your machine |
-| `livekit-agent/` | TypeScript LiveKit agent, registered as `safetyspect-ts` | LiveKit Cloud |
-| `postgres/` | PostgreSQL 17 with a persistent volume, reachable only over Fly's private network | Fly app `vent-demo-db` |
-| `.vent/` | Voice test suites, one per platform | [Vent](https://www.npmjs.com/package/vent-hq) |
+| Path | What it is |
+| --- | --- |
+| `app.py` | The web server. Turns Retell's and Vapi's tool requests into tool calls |
+| `tools.py` | The four tools: `lookup_customer`, `check_availability`, `book_inspection`, `cancel_inspection` |
+| `tool_definitions.py` | How each tool is described to the agents (sent by the setup scripts) |
+| `db.py` | Database connection |
+| `seed.py` | Schema and sample customers, run when the server starts |
+| `retell/` | The Retell agent: `prompt.md`, and `setup.py` to push it |
+| `vapi/` | The Vapi assistant: `prompt.md`, and `setup.py` to push it |
+| `postgres/` | PostgreSQL 17 on Fly (`vent-demo-db`), reachable only over Fly's private network |
 
-## Environment
+## Data
 
-The server reads `DEMO_DATABASE_URL` (a `postgres://…/vent_demo` URL). It creates its
-schema and sample customers on startup and keeps existing bookings.
+| Table | One row is |
+| --- | --- |
+| `customers` | a company that hires SafetySpect |
+| `stores` | one location of a customer |
+| `inspection_history` | one past inspection at a store |
+| `inspections` | an upcoming booking |
 
-Each platform needs its key, plus the ID its setup script prints:
-
-| Platform | Key | ID |
-| --- | --- | --- |
-| Bland | `BLAND_API_KEY` | `BLAND_PATHWAY_ID`, `BLAND_PERSONA_ID` |
-| Vapi | `VAPI_API_KEY` | `VAPI_ASSISTANT_ID` |
-| Retell | `RETELL_API_KEY` | `RETELL_AGENT_ID`, `RETELL_LLM_ID` |
-| ElevenLabs | `ELEVENLABS_API_KEY` | `ELEVENLABS_AGENT_ID` |
-| LiveKit | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | agent name `safetyspect-ts` |
-
-Keep them in `.env` (ignored by Git) or a secrets manager.
-
-## Set up the hosted agents
+## Run
 
 ```bash
-cd server
-pnpm install
-pnpm setup:retell        # also setup:vapi, setup:bland, setup:elevenlabs
+pip install -r requirements.txt
+DEMO_DATABASE_URL=postgres://... uvicorn app:app --port 3001
 ```
 
-The scripts point each agent's tools at `BACKEND_URL` (default
-`https://vent-demo-backend.fly.dev`). With an existing ID in the environment they
-update that agent instead of creating a new one.
-
-## Deploy
+Deployed as the Fly app `safetyspect-demo-backend`:
 
 ```bash
-(cd postgres && fly deploy --remote-only --ha=false)
-(cd server && fly deploy --remote-only --ha=false)
-(cd livekit-agent && lk agent deploy)
+fly deploy --remote-only --ha=false                    # backend
+(cd postgres && fly deploy --remote-only --ha=false)   # database
 ```
 
-## Test calls
+## Push the agents
 
-Calls are tested with Vent, which places real calls against the deployed agents and
-returns the transcript, tool calls, latency and audio quality as JSON:
+Keys go in `.env` at the repo root (ignored by Git):
+
+```
+VAPI_API_KEY=...
+VAPI_ASSISTANT_ID=...
+RETELL_API_KEY=...
+RETELL_AGENT_ID=...
+```
+
+From the repo root:
 
 ```bash
-npx vent-hq run -f .vent/suite.retell.json
+set -a; source .env; set +a
+python -m retell.setup     # updates RETELL_AGENT_ID and its LLM if set, otherwise creates them
+python -m vapi.setup       # updates VAPI_ASSISTANT_ID and its tools if set, otherwise creates them
 ```
 
-Swap in `suite.vapi.json`, `suite.bland.json`, `suite.elevenlabs.json` or
-`suite.livekit.json` for the other platforms. Calls use real provider credits.
-
-The server's integration tests run against the deployed backend:
-
-```bash
-cd server && pnpm test
-```
+Tools point at `BACKEND_URL` (default `https://safetyspect-demo-backend.fly.dev`).
